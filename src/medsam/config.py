@@ -3,14 +3,13 @@ import torch
 
 # ── Paths ──────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = BASE_DIR
 
-TASK1_2_INPUT = DATA_DIR / "ISIC2018_Task1-2_Training_Input"
-TASK1_GT = DATA_DIR / "ISIC2018_Task1_Training_GroundTruth"
-TASK2_GT = DATA_DIR / "ISIC2018_Task2_Training_GroundTruth_v3"
+TASK1_2_INPUT = BASE_DIR / "ISIC2018_Task1-2_Training_Input"
+TASK1_GT = BASE_DIR / "ISIC2018_Task1_Training_GroundTruth"
+TASK2_GT = BASE_DIR / "ISIC2018_Task2_Training_GroundTruth_v3"
 
 # Prepared dataset directories
-DATASET_DIR = DATA_DIR / "dataset"
+DATASET_DIR = BASE_DIR / "dataset"
 MEDSAM_DIR = DATASET_DIR / "medsam"
 ATTR_DIR = DATASET_DIR / "attributes"
 
@@ -36,7 +35,7 @@ MEDSAM_IMG_SIZE = 1024
 ATTR_IMG_SIZE = 256
 
 # ── MedSAM ─────────────────────────────────────────────────────────────
-MEDSAM_CHECKPOINT = "medsam_vit_b.pth"
+MEDSAM_CHECKPOINT = str(BASE_DIR / "medsam_vit_b.pth")
 SAM_MODEL_TYPE = "vit_b"
 MEDSAM_LR = 1e-4
 MEDSAM_WEIGHT_DECAY = 0.01

@@ -2,13 +2,12 @@ from pathlib import Path
 
 # ── Paths ──────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = BASE_DIR
 
-TASK1_2_INPUT = DATA_DIR / "ISIC2018_Task1-2_Training_Input"
-TASK1_GT = DATA_DIR / "ISIC2018_Task1_Training_GroundTruth"
+TASK1_2_INPUT = BASE_DIR / "ISIC2018_Task1-2_Training_Input"
+TASK1_GT = BASE_DIR / "ISIC2018_Task1_Training_GroundTruth"
 
 # Prepared dataset
-DATASET_DIR = DATA_DIR / "dataset"
+DATASET_DIR = BASE_DIR / "dataset"
 YOLO_DIR = DATASET_DIR / "yolo"
 
 # Output
