@@ -11,8 +11,11 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 
 from yolo.config import (
-    TASK1_2_INPUT, TASK1_GT,
-    YOLO_DIR, TRAIN_RATIO, RANDOM_SEED,
+    TASK1_2_INPUT,
+    TASK1_GT,
+    YOLO_DIR,
+    TRAIN_RATIO,
+    RANDOM_SEED,
 )
 
 
@@ -76,10 +79,14 @@ def prepare_yolo(train_ids, val_ids):
         f"path: {YOLO_DIR.resolve()}\n"
         f"train: images/train\n"
         f"val: images/val\n"
+        f"nc: 1\n"
         f"names:\n"
         f"  0: lesion\n"
+        f"task: detect\n"
     )
-    print(f"YOLO dataset ready at {YOLO_DIR}  ({len(train_ids)} train, {len(val_ids)} val)")
+    print(
+        f"YOLO dataset ready at {YOLO_DIR}  ({len(train_ids)} train, {len(val_ids)} val)"
+    )
 
 
 def main():

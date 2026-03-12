@@ -20,7 +20,7 @@ TRAIN_RATIO = 0.8
 RANDOM_SEED = 42
 
 # ── YOLOv8 ─────────────────────────────────────────────────────────────
-YOLO_MODEL = "yolov8n-seg.pt"
+YOLO_MODEL = "yolov8n.pt"
 YOLO_EPOCHS = 100
 YOLO_BATCH = 16
 YOLO_IMG_SIZE = 640

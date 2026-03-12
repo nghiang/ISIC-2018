@@ -20,7 +20,13 @@ MEDSAM_OUTPUT = OUTPUT_DIR / "medsam"
 ATTR_OUTPUT = OUTPUT_DIR / "attributes"
 
 # ── Dataset ────────────────────────────────────────────────────────────
-ATTRIBUTES = ["globules", "milia_like_cyst", "negative_network", "pigment_network", "streaks"]
+ATTRIBUTES = [
+    "globules",
+    "milia_like_cyst",
+    "negative_network",
+    "pigment_network",
+    "streaks",
+]
 NUM_ATTRIBUTES = len(ATTRIBUTES)
 TRAIN_RATIO = 0.8
 RANDOM_SEED = 42
@@ -36,7 +42,8 @@ MEDSAM_LR = 1e-4
 MEDSAM_WEIGHT_DECAY = 0.01
 MEDSAM_EPOCHS = 50
 MEDSAM_BATCH = 4
-BBOX_SHIFT = 20  # random perturbation for bbox prompts
+BBOX_SHIFT = 20  # random perturbation for bbox prompts during training
+CROP_MARGIN = 50  # pixel margin around bbox when cropping to lesion region
 
 # ── Attribute Segmentation ─────────────────────────────────────────────
 ATTR_LR = 1e-4

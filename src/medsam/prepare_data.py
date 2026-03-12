@@ -8,10 +8,16 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 
 from medsam.config import (
-    TASK1_2_INPUT, TASK1_GT, TASK2_GT,
-    MEDSAM_DIR, ATTR_DIR,
-    ATTRIBUTES, TRAIN_RATIO, RANDOM_SEED,
+    TASK1_2_INPUT,
+    TASK1_GT,
+    TASK2_GT,
+    MEDSAM_DIR,
+    ATTR_DIR,
+    ATTRIBUTES,
+    TRAIN_RATIO,
+    RANDOM_SEED,
     MEDSAM_IMG_SIZE,
+    CROP_MARGIN,
 )
 
 NUM_ATTRIBUTES = len(ATTRIBUTES)
@@ -61,7 +67,13 @@ def split_ids(image_ids):
 
 # ── MedSAM data preparation ───────────────────────────────────────────
 def prepare_medsam(train_ids, val_ids):
-    """Save MedSAM-ready npz files: image_1024, mask_1024, bbox_1024."""
+    """
+    Save MedSAM-ready npz files cropped to the GT lesion bbox.
+
+    Mirrors how inference works: YOLO gives a bbox → crop to that region →
+    resize/pad to 1024×1024 → MedSAM. Here we use the GT bbox instead of
+    a YOLO prediction so the train distribution matches inference.
+    """
     for split, ids in [("train", train_ids), ("val", val_ids)]:
         out_dir = MEDSAM_DIR / split
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -77,13 +89,31 @@ def prepare_medsam(train_ids, val_ids):
                 mask = mask[:, :, 0]
             mask = (mask > 127).astype(np.uint8)
 
-            img_resized, scale = resize_longest_side(img, MEDSAM_IMG_SIZE)
-            mask_resized, _ = resize_longest_side(mask * 255, MEDSAM_IMG_SIZE)
+            # Compute GT bbox in original image coords
+            bbox_orig = mask_to_bbox(mask)
+            if bbox_orig is None:
+                continue
+
+            # Crop image and mask to GT bbox with margin
+            h, w = img.shape[:2]
+            x1, y1, x2, y2 = bbox_orig
+            cx1 = max(0, x1 - CROP_MARGIN)
+            cy1 = max(0, y1 - CROP_MARGIN)
+            cx2 = min(w, x2 + CROP_MARGIN)
+            cy2 = min(h, y2 + CROP_MARGIN)
+
+            img_crop = img[cy1:cy2, cx1:cx2]
+            mask_crop = mask[cy1:cy2, cx1:cx2]
+
+            # Resize crop (longest side → 1024) and pad to square
+            img_resized, scale = resize_longest_side(img_crop, MEDSAM_IMG_SIZE)
+            mask_resized, _ = resize_longest_side(mask_crop * 255, MEDSAM_IMG_SIZE)
             mask_resized = (mask_resized > 127).astype(np.uint8)
 
             img_padded = pad_to_square(img_resized, MEDSAM_IMG_SIZE)
             mask_padded = pad_to_square(mask_resized, MEDSAM_IMG_SIZE)
 
+            # Bbox within 1024×1024 crop space (derived from resized mask)
             bbox = mask_to_bbox(mask_padded)
             if bbox is None:
                 continue
@@ -95,7 +125,9 @@ def prepare_medsam(train_ids, val_ids):
                 bbox=np.array(bbox, dtype=np.float32),
             )
 
-    print(f"MedSAM dataset ready at {MEDSAM_DIR}  ({len(train_ids)} train, {len(val_ids)} val)")
+    print(
+        f"MedSAM dataset ready at {MEDSAM_DIR}  ({len(train_ids)} train, {len(val_ids)} val)"
+    )
 
 
 # ── Attribute segmentation data preparation ────────────────────────────
@@ -133,7 +165,9 @@ def prepare_attributes(train_ids, val_ids):
                 attr_masks=attr_masks,
             )
 
-    print(f"Attribute dataset ready at {ATTR_DIR}  ({len(train_ids)} train, {len(val_ids)} val)")
+    print(
+        f"Attribute dataset ready at {ATTR_DIR}  ({len(train_ids)} train, {len(val_ids)} val)"
+    )
 
 
 def main():

@@ -21,6 +21,7 @@ def train(epochs=YOLO_EPOCHS, batch=YOLO_BATCH, img_size=YOLO_IMG_SIZE, resume=F
         epochs=epochs,
         batch=batch,
         imgsz=img_size,
+        task="detect",
         project=str(YOLO_OUTPUT),
         name="lesion_detect",
         exist_ok=True,

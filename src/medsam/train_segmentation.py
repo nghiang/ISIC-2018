@@ -14,10 +14,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 from medsam.config import (
-    MEDSAM_DIR, MEDSAM_OUTPUT, MEDSAM_CHECKPOINT, DEVICE,
-    MEDSAM_LR, MEDSAM_WEIGHT_DECAY, MEDSAM_EPOCHS, MEDSAM_BATCH,
+    MEDSAM_DIR,
+    MEDSAM_OUTPUT,
+    MEDSAM_CHECKPOINT,
+    DEVICE,
+    MEDSAM_LR,
+    MEDSAM_WEIGHT_DECAY,
+    MEDSAM_EPOCHS,
+    MEDSAM_BATCH,
 )
 from medsam.dataset import MedSAMDataset
 from medsam.models import MedSAM
@@ -47,22 +54,22 @@ class DiceBCELoss(nn.Module):
 def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
     total_loss = 0
-    for images, bboxes, masks in loader:
+    pbar = tqdm(loader, desc="  train", leave=False)
+    for images, bboxes, masks in pbar:
         images = images.to(device)
         bboxes = bboxes.to(device)
         masks = masks.to(device)
 
         pred_masks = model(images, bboxes)
 
-        masks_resized = F.interpolate(
-            masks, size=pred_masks.shape[-2:], mode="nearest"
-        )
+        masks_resized = F.interpolate(masks, size=pred_masks.shape[-2:], mode="nearest")
 
         loss = criterion(pred_masks, masks_resized)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         total_loss += loss.item() * images.size(0)
+        pbar.set_postfix(loss=f"{loss.item():.4f}")
 
     return total_loss / len(loader.dataset)
 
@@ -74,15 +81,13 @@ def validate(model, loader, criterion, device):
     total_dice = 0
     total_iou = 0
     n = 0
-    for images, bboxes, masks in loader:
+    for images, bboxes, masks in tqdm(loader, desc="  val", leave=False):
         images = images.to(device)
         bboxes = bboxes.to(device)
         masks = masks.to(device)
 
         pred_masks = model(images, bboxes)
-        masks_resized = F.interpolate(
-            masks, size=pred_masks.shape[-2:], mode="nearest"
-        )
+        masks_resized = F.interpolate(masks, size=pred_masks.shape[-2:], mode="nearest")
 
         loss = criterion(pred_masks, masks_resized)
         total_loss += loss.item() * images.size(0)
@@ -96,7 +101,9 @@ def validate(model, loader, criterion, device):
     return total_loss / len(loader.dataset), total_dice / n, total_iou / n
 
 
-def train(epochs=MEDSAM_EPOCHS, batch=MEDSAM_BATCH, lr=MEDSAM_LR, checkpoint=MEDSAM_CHECKPOINT):
+def train(
+    epochs=MEDSAM_EPOCHS, batch=MEDSAM_BATCH, lr=MEDSAM_LR, checkpoint=MEDSAM_CHECKPOINT
+):
     MEDSAM_OUTPUT.mkdir(parents=True, exist_ok=True)
 
     print(f"Device: {DEVICE}")
@@ -107,8 +114,12 @@ def train(epochs=MEDSAM_EPOCHS, batch=MEDSAM_BATCH, lr=MEDSAM_LR, checkpoint=MED
 
     train_ds = MedSAMDataset(MEDSAM_DIR / "train", augment=True)
     val_ds = MedSAMDataset(MEDSAM_DIR / "val", augment=False)
-    train_loader = DataLoader(train_ds, batch_size=batch, shuffle=True, num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=batch, shuffle=False, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(
+        train_ds, batch_size=batch, shuffle=True, num_workers=4, pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=batch, shuffle=False, num_workers=4, pin_memory=True
+    )
 
     print(f"Train: {len(train_ds)}  Val: {len(val_ds)}")
 
@@ -119,14 +130,16 @@ def train(epochs=MEDSAM_EPOCHS, batch=MEDSAM_BATCH, lr=MEDSAM_LR, checkpoint=MED
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     best_dice = 0
-    for epoch in range(1, epochs + 1):
+    epoch_bar = tqdm(range(1, epochs + 1), desc="MedSAM epochs")
+    for epoch in epoch_bar:
         t0 = time.time()
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, DEVICE)
         val_loss, val_dice, val_iou = validate(model, val_loader, criterion, DEVICE)
         scheduler.step()
         elapsed = time.time() - t0
+        epoch_bar.set_postfix(val_dice=f"{val_dice:.4f}", val_loss=f"{val_loss:.4f}")
 
-        print(
+        tqdm.write(
             f"Epoch {epoch:3d}/{epochs} | "
             f"train_loss: {train_loss:.4f} | "
             f"val_loss: {val_loss:.4f} | "
@@ -139,13 +152,13 @@ def train(epochs=MEDSAM_EPOCHS, batch=MEDSAM_BATCH, lr=MEDSAM_LR, checkpoint=MED
         if val_dice > best_dice:
             best_dice = val_dice
             torch.save(model.state_dict(), MEDSAM_OUTPUT / "medsam_best.pth")
-            print(f"  → saved best model (dice={best_dice:.4f})")
+            tqdm.write(f"  → saved best model (dice={best_dice:.4f})")
 
         if epoch % 10 == 0:
             torch.save(model.state_dict(), MEDSAM_OUTPUT / f"medsam_epoch{epoch}.pth")
 
     torch.save(model.state_dict(), MEDSAM_OUTPUT / "medsam_last.pth")
-    print(f"Training complete. Best val dice: {best_dice:.4f}")
+    tqdm.write(f"Training complete. Best val dice: {best_dice:.4f}")
 
 
 if __name__ == "__main__":

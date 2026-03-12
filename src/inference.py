@@ -23,6 +23,7 @@ from medsam.config import (
     ATTR_IMG_SIZE,
     ATTRIBUTES,
     MEDSAM_CHECKPOINT,
+    CROP_MARGIN,
 )
 from medsam.models import MedSAM, AttributeSegModel
 
@@ -111,15 +112,24 @@ def predict(image_path, yolo_model, medsam_model, attr_model):
     x_min, y_min, x_max, y_max = bbox
 
     # ── Stage 2: MedSAM lesion segmentation ────────────────────────
-    img_tensor, scale, rh, rw = preprocess_for_medsam(image_np)
+    # Crop to YOLO bbox region (matches training distribution)
+    cx1 = max(0, x_min - CROP_MARGIN)
+    cy1 = max(0, y_min - CROP_MARGIN)
+    cx2 = min(orig_w, x_max + CROP_MARGIN)
+    cy2 = min(orig_h, y_max + CROP_MARGIN)
+    crop = image_np[cy1:cy2, cx1:cx2]
+    crop_h, crop_w = crop.shape[:2]
+
+    img_tensor, scale, rh, rw = preprocess_for_medsam(crop)
     img_tensor = img_tensor.to(DEVICE)
 
+    # Translate YOLO bbox into crop coords, then scale to 1024 space
     bbox_scaled = np.array(
         [
-            x_min * scale,
-            y_min * scale,
-            x_max * scale,
-            y_max * scale,
+            (x_min - cx1) * scale,
+            (y_min - cy1) * scale,
+            (x_max - cx1) * scale,
+            (y_max - cy1) * scale,
         ],
         dtype=np.float32,
     )
@@ -127,7 +137,11 @@ def predict(image_path, yolo_model, medsam_model, attr_model):
 
     pred_mask = medsam_model(img_tensor, bbox_tensor)
     pred_mask = torch.sigmoid(pred_mask)
-    lesion_mask = postprocess_mask(pred_mask, orig_h, orig_w, rh, rw)
+    crop_mask = postprocess_mask(pred_mask, crop_h, crop_w, rh, rw)
+
+    # Place the crop mask back into full image space
+    lesion_mask = np.zeros((orig_h, orig_w), dtype=np.uint8)
+    lesion_mask[cy1:cy2, cx1:cx2] = crop_mask
 
     # ── Stage 3: Attribute segmentation ────────────────────────────
     # Crop lesion region

@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 from medsam.config import (
     ATTR_DIR,
@@ -84,7 +85,8 @@ def resize_for_encoder(images, target_size=MEDSAM_IMG_SIZE):
 def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
     total_loss = 0
-    for images, masks in loader:
+    pbar = tqdm(loader, desc="  train", leave=False)
+    for images, masks in pbar:
         images = images.to(device)
         masks = masks.to(device)
 
@@ -101,6 +103,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
         loss.backward()
         optimizer.step()
         total_loss += loss.item() * images.size(0)
+        pbar.set_postfix(loss=f"{loss.item():.4f}")
 
     return total_loss / len(loader.dataset)
 
@@ -113,7 +116,7 @@ def validate(model, loader, criterion, device):
     per_class_iou = np.zeros(NUM_ATTRIBUTES)
     n = 0
 
-    for images, masks in loader:
+    for images, masks in tqdm(loader, desc="  val", leave=False):
         images = images.to(device)
         masks = masks.to(device)
 
@@ -175,7 +178,8 @@ def train(
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     best_dice = 0
-    for epoch in range(1, epochs + 1):
+    epoch_bar = tqdm(range(1, epochs + 1), desc="Attr epochs")
+    for epoch in epoch_bar:
         t0 = time.time()
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, DEVICE)
         val_loss, val_dice, val_iou = validate(model, val_loader, criterion, DEVICE)
@@ -184,8 +188,9 @@ def train(
 
         mean_dice = val_dice.mean()
         mean_iou = val_iou.mean()
+        epoch_bar.set_postfix(mean_dice=f"{mean_dice:.4f}", val_loss=f"{val_loss:.4f}")
 
-        print(
+        tqdm.write(
             f"Epoch {epoch:3d}/{epochs} | "
             f"train_loss: {train_loss:.4f} | "
             f"val_loss: {val_loss:.4f} | "
@@ -197,18 +202,20 @@ def train(
 
         if epoch % 10 == 0 or epoch == 1:
             for c, attr in enumerate(ATTRIBUTES):
-                print(f"    {attr:25s}: dice={val_dice[c]:.4f}  iou={val_iou[c]:.4f}")
+                tqdm.write(
+                    f"    {attr:25s}: dice={val_dice[c]:.4f}  iou={val_iou[c]:.4f}"
+                )
 
         if mean_dice > best_dice:
             best_dice = mean_dice
             torch.save(model.state_dict(), ATTR_OUTPUT / "attr_best.pth")
-            print(f"  → saved best model (dice={best_dice:.4f})")
+            tqdm.write(f"  → saved best model (dice={best_dice:.4f})")
 
         if epoch % 10 == 0:
             torch.save(model.state_dict(), ATTR_OUTPUT / f"attr_epoch{epoch}.pth")
 
     torch.save(model.state_dict(), ATTR_OUTPUT / "attr_last.pth")
-    print(f"Training complete. Best mean dice: {best_dice:.4f}")
+    tqdm.write(f"Training complete. Best mean dice: {best_dice:.4f}")
 
 
 if __name__ == "__main__":
