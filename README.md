@@ -299,8 +299,9 @@ MedSAM performs precise lesion boundary segmentation using the bounding box from
 | Optimizer | AdamW (lr=1e-4, weight_decay=0.01) |
 | Loss function | BCE + Dice loss |
 | Scheduler | Cosine annealing |
-| Epochs | 50 |
-| Batch size | 4 |
+| Epochs (this run) | 7 |
+| Batch size (this run) | 2 |
+| DataLoader workers (this run) | 2 |
 
 ### 2.1.4 Stage 3: Dermoscopic Attribute Segmentation
 
@@ -510,6 +511,9 @@ The attribute segmentation output complements existing melanoma classification s
 
 # 4. Experiments and Results
 
+The full training notebook for this experiment is available at:
+**[https://www.kaggle.com/code/phamtiensondeptrai1/isic-2018?scriptVersionId=303619943](https://www.kaggle.com/code/phamtiensondeptrai1/isic-2018?scriptVersionId=303619943)**
+
 ## 4.1 Experimental Setup
 
 ### 4.1.1 Model Configuration
@@ -518,9 +522,9 @@ The three-stage pipeline is trained sequentially:
 
 | Stage | Model | Training Data | Hardware |
 |-------|-------|---------------|----------|
-| Stage 1 | YOLOv8n-seg | 2,075 train / 519 val images | GPU (CUDA) or CPU |
-| Stage 2 | MedSAM (ViT-B) | 2,075 train / 519 val npz files | GPU recommended |
-| Stage 3 | SAM encoder + Attribute decoder | 2,075 train / 519 val npz files | GPU recommended |
+| Stage 1 | YOLOv8n | 2,075 train / 519 val images | Kaggle GPU (T4) |
+| Stage 2 | MedSAM (ViT-B) | 2,075 train / 519 val npz files | Kaggle GPU (T4) |
+| Stage 3 | SAM encoder + Attribute decoder | 2,075 train / 519 val npz files | Kaggle GPU (T4) |
 
 ### 4.1.2 Training Configuration
 
@@ -528,10 +532,11 @@ The three-stage pipeline is trained sequentially:
 
 | Parameter | Value |
 |-----------|-------|
-| Base model | yolov8n-seg.pt (pretrained on COCO) |
-| Image size | 640 |
-| Epochs | 100 |
-| Batch size | 16 |
+| Base model | yolov8n.pt (pretrained on COCO) |
+| Image size | 640×640 |
+| Epochs | 60 |
+| Batch size | 32 |
+| Workers | 2 |
 | Patience | 15 (early stopping) |
 | Optimizer | SGD (YOLOv8 default) |
 
@@ -539,10 +544,11 @@ The three-stage pipeline is trained sequentially:
 
 | Parameter | Value |
 |-----------|-------|
-| Base model | medsam_vit_b.pth |
+| Base model | sam_vit_b_01ec64.pth (SAM ViT-B pretrained) |
 | Image size | 1024×1024 |
-| Epochs | 50 |
-| Batch size | 4 |
+| Epochs | 7 |
+| Batch size | 2 |
+| Workers | 2 |
 | Optimizer | AdamW (lr=1e-4, wd=0.01) |
 | Loss | BCE + Dice |
 | Scheduler | Cosine annealing |
@@ -556,8 +562,9 @@ The three-stage pipeline is trained sequentially:
 | Decoder | 4-stage ConvTranspose decoder |
 | Crop size | 256×256 (lesion region) |
 | Encoder input | 1024×1024 (upsampled) |
-| Epochs | 80 |
-| Batch size | 4 |
+| Epochs | 20 |
+| Batch size | 2 |
+| Workers | 2 |
 | Optimizer | AdamW (lr=1e-4, wd=0.01) |
 | Loss | Weighted focal BCE (γ=2.0) + Dice |
 | Scheduler | Cosine annealing |
@@ -588,75 +595,157 @@ Where $\gamma = 2.0$ and $\alpha_c$ is the class-specific weight inversely propo
 |--------|---------|-----|
 | Dice coefficient | $\frac{2TP}{2TP + FP + FN}$ | Primary segmentation metric |
 | IoU (Jaccard) | $\frac{TP}{TP + FP + FN}$ | Region overlap metric |
-| Pixel accuracy | $\frac{TP + TN}{TP + TN + FP + FN}$ | Overall pixel classification |
+| mAP50 / mAP50-95 | Standard COCO detection metrics | YOLOv8 lesion detection |
 
-## 4.2 Expected Results
+## 4.2 Quantitative Results
 
-### 4.2.1 Stage 2: Lesion Segmentation
+### 4.2.1 Stage 1: YOLOv8 Lesion Detection
 
-Based on the literature and MedSAM's demonstrated performance on medical segmentation tasks, expected results on ISIC 2018 Task 1:
+```python
+model = train_yolo_module.train(epochs=60, batch=32, img_size=640, workers=2)
+```
 
-| Metric | Expected Range |
-|--------|----------------|
-| Dice coefficient | 0.85–0.92 |
-| IoU | 0.78–0.87 |
-| Pixel accuracy | 0.94–0.97 |
+Validation metrics are reported by `validate_yolo_module.validate()` after training completes.
 
-MedSAM's pretrained ViT encoder provides strong initialization, and the bbox-prompted approach is well-suited for single-object segmentation.
+### 4.2.2 Stage 2: MedSAM Lesion Segmentation
 
-### 4.2.2 Stage 3: Attribute Segmentation
+```python
+train_medsam_module.train(epochs=7, batch=2, lr=1e-4, workers=2)
+```
 
-Expected per-attribute performance varies significantly due to class imbalance:
+Final training log:
 
-| Attribute | Frequency | Expected Dice | Expected IoU |
-|-----------|-----------|---------------|-------------|
-| Pigment network | 59.0% | 0.55–0.70 | 0.45–0.60 |
-| Globules | 25.0% | 0.35–0.50 | 0.25–0.40 |
-| Milia-like cyst | 28.5% | 0.30–0.45 | 0.20–0.35 |
-| Negative network | 6.5% | 0.15–0.30 | 0.10–0.25 |
-| Streaks | 3.5% | 0.10–0.25 | 0.08–0.20 |
+```
+Epoch   7/7 | train_loss: 0.1608 | val_loss: 0.1847 | val_dice: 0.9490 | val_iou: 0.9061 | lr: 0.00e+00 | 1719.3s
+  → saved best model (dice=0.9490)
+Training complete. Best val dice: 0.9490
+```
 
-Rare attributes (streaks, negative network) are expected to have lower performance due to limited training examples and extreme pixel-level imbalance.
+| Metric | Value |
+|--------|-------|
+| Train loss (epoch 7) | 0.1608 |
+| Val loss (epoch 7) | 0.1847 |
+| Val Dice | 0.9490 |
+| Val IoU | 0.9061 |
+| Best val Dice | **0.9490** |
 
-## 4.3 Qualitative Analysis
+### 4.2.3 Stage 3: Attribute Segmentation
 
-### 4.3.1 Expected Success Cases
+```python
+train_attr_module.train(epochs=20, batch=2, lr=1e-4, workers=2)
+```
 
-| Scenario | Expectation |
-|----------|-------------|
-| Large, well-defined lesions | High-quality segmentation with clear boundaries |
-| Prominent pigment network | Reliable detection due to high training frequency |
-| High-contrast structures | Milia-like cysts with clear white/yellow appearance |
+Final training log:
 
-### 4.3.2 Expected Failure Cases
+```
+Epoch  20/20 | train_loss: 0.9143 | val_loss: 0.9429 | mean_dice: 0.5038 | mean_iou: 0.4849 | lr: 0.00e+00 | 1116.9s
+    globules                 : dice=0.1687  iou=0.1458
+    milia_like_cyst          : dice=0.1670  iou=0.1612
+    negative_network         : dice=0.9326  iou=0.9326
+    pigment_network          : dice=0.3087  iou=0.2429
+    streaks                  : dice=0.9420  iou=0.9420
+Training complete. Best mean dice: 0.7320
+```
 
-| Failure Mode | Cause |
-|-------------|-------|
-| Small or flat lesions | Minimal contrast with surrounding skin |
-| Hair-occluded regions | Artifacts interfere with both segmentation and attribute detection |
-| Rare attributes (streaks, negative network) | Insufficient training examples lead to low recall |
-| Ambiguous boundaries | Gradual transitions between structures and normal skin |
-| Multiple overlapping structures | Model may confuse co-occurring attributes |
+Summary:
 
-## 4.4 Discussion
+| Metric | Value |
+|--------|-------|
+| Train loss (epoch 20) | 0.9143 |
+| Val loss (epoch 20) | 0.9429 |
+| Mean Dice (epoch 20) | 0.5038 |
+| Mean IoU (epoch 20) | 0.4849 |
+| Best mean Dice (over all epochs) | **0.7320** |
 
-### 4.4.1 Limitations
+Per-attribute results at epoch 20:
 
-| Limitation | Impact |
-|-----------|--------|
-| CPU training | Without GPU, training MedSAM (ViT-B encoder) is extremely slow |
-| No MedSAM checkpoint | Without the pretrained medsam_vit_b.pth, the model trains from scratch with random initialization |
-| Small dataset | 2,594 images is small for deep learning; foundation model pretraining partially mitigates this |
-| Annotation noise | 21% unlabeled images introduce false-negative supervision |
-| Evaluation bias | Incomplete ground truth means metrics underestimate true model performance |
+| Attribute | Frequency in data | Dice | IoU |
+|-----------|-------------------|------|-----|
+| Negative network | 6.5% | **0.9326** | 0.9326 |
+| Streaks | 3.5% | **0.9420** | 0.9420 |
+| Pigment network | 59.0% | 0.3087 | 0.2429 |
+| Globules | 25.0% | 0.1687 | 0.1458 |
+| Milia-like cyst | 28.5% | 0.1670 | 0.1612 |
 
-### 4.4.2 Impact of Annotation Noise
+## 4.3 Qualitative Visualizations
 
-| Effect | Description |
-|--------|-------------|
-| Training signal degradation | Missing annotations cause the model to suppress correct detections |
-| Metric underestimation | True positive predictions on unannotated structures are counted as false positives |
-| Class-dependent impact | Rare attributes suffer more because each mislabeled sample has proportionally higher influence |
+### 4.3.1 Stage 1: YOLOv8 Lesion Detection
+
+The figure below compares the ground truth bounding box (green) with the model's predicted bounding box (red) on a validation sample.
+
+![YOLO Prediction vs Ground Truth](image/yolo_pred.png)
+*Figure 9: YOLOv8 lesion detection on a validation image. Green: ground truth box. Red: predicted box with confidence score.*
+
+### 4.3.2 Stage 2: MedSAM Lesion Segmentation
+
+The figure below shows the ground truth lesion mask (green overlay) alongside the MedSAM predicted mask (red overlay), with the bounding box prompt visible on both panels.
+
+![MedSAM Segmentation Prediction](image/medsam_pred.png)
+*Figure 10: MedSAM lesion segmentation on a validation sample. Left: ground truth mask. Right: predicted mask. Yellow box: bounding box prompt from Stage 1.*
+
+### 4.3.3 Stage 3: Attribute Segmentation
+
+The figures below show per-attribute predictions across two validation samples. Each row corresponds to one dermoscopic attribute, with the ground truth (green) on the left and the prediction (red) on the right.
+
+![Attribute Segmentation Sample 1](image/medsam_attribute_1.png)
+*Figure 11: Attribute segmentation predictions for validation sample 1. Rows from top: globules, milia-like cyst, negative network, pigment network, streaks.*
+
+![Attribute Segmentation Sample 2](image/medsam_attribute_2.png)
+*Figure 12: Attribute segmentation predictions for validation sample 2.*
+
+## 4.4 Discussion of Limitations and Failure Cases
+
+### 4.4.1 Hardware Constraints and Undertrained Models
+
+Training was conducted on Kaggle free-tier GPU (T4), which severely limited the number of epochs that could be run within the session time budget. Each epoch for MedSAM required approximately **1 hour** of compute time, which is why Stage 2 was limited to 7 epochs and Stage 3 to 20 epochs. The default configuration in the source code calls for 50 and 80 epochs respectively. Models are almost certainly undertrained, and all reported metrics should be interpreted as lower bounds on what a fully trained pipeline could achieve.
+
+### 4.4.2 Inaccurate Ground Truth Annotations
+
+As visible in Figure 9, the YOLOv8 model detects **two distinct lesions** in the image while the ground truth bounding box covers only one. This is not necessarily a model error — the annotation may be incomplete or inconsistent. The ISIC 2018 dataset was annotated by multiple experts across different clinical centers, and some images contain more than one lesion or ambiguous boundaries that were partially or inconsistently labeled.
+
+This creates a fundamental problem: the model is penalized during training and evaluation for predictions that are visually reasonable but not present in the ground truth. Metrics such as Dice and IoU underestimate true model performance in such cases.
+
+### 4.4.3 Lack of Confidence Estimation in MedSAM
+
+The current implementation outputs a binary mask by applying a fixed threshold of 0.5 to the sigmoid of the predicted logits. This discards potentially useful uncertainty information. A more robust approach would be to compute a **per-pixel confidence score** from the raw mask logits:
+
+$$\text{confidence}(x) = \left| \text{logit}(x) \right| = \left| \sigma^{-1}(p(x)) \right|$$
+
+Pixels with logits close to zero are uncertain, while pixels with high absolute logit values are confidently positive or negative. Exposing this as a continuous heatmap to the clinician — rather than a hard binary mask — would better communicate model uncertainty and reduce automation bias.
+
+### 4.4.4 Inflated Dice Score on Empty Ground Truth Masks
+
+The Dice coefficient has a well-known degenerate case: when the ground truth mask is entirely empty (all-zero) and the model also predicts all-zero, the Dice score is 1.0 by the smoothed formula:
+
+$$\text{Dice} = \frac{2 \cdot 0 + \epsilon}{0 + 0 + \epsilon} = 1.0$$
+
+In the ISIC 2018 dataset, approximately **21% of images have no positive attribute annotations** for any of the five structures. When training the attribute segmentation model, these empty masks artificially inflate the reported Dice score, particularly for rare attributes such as streaks (3.5% prevalence) and negative network (6.5% prevalence). This partially explains the unexpectedly high Dice for negative network (0.9326) and streaks (0.9420) at epoch 20 — the model may have learned to predict empty masks for most inputs, which is trivially "correct" when the ground truth is also empty.
+
+Two possible mitigations are:
+
+1. **Filter empty masks from evaluation**: Compute Dice and IoU only on samples where the ground truth contains at least one positive pixel, giving a more honest estimate of segmentation quality on actual attribute regions.
+2. **Two-stage attribute detection**: Train a separate image-level classifier to predict which attributes are present, then run the segmentation model only on those attributes. This avoids forcing the segmentation decoder to learn a trivial all-zero output for absent attributes, and also reduces multi-level imbalance.
+
+### 4.4.5 Multi-Level Class Imbalance
+
+The dataset suffers from imbalance at three distinct levels simultaneously, which makes it especially difficult to address with any single technique:
+
+| Level | Description | Example |
+|-------|-------------|---------|
+| Image-level | Many images have no attribute annotations | ~21% of images are entirely unlabeled for attributes |
+| Class-level | Attributes vary greatly in prevalence | Pigment network: 59%, Streaks: 3.5% — a 17× ratio |
+| Pixel-level | Even present attributes cover very little area | Range: 0.06% (streaks) to 3.74% (pigment network) of pixels |
+
+The current approach applies weighted focal loss with class-frequency-based weights, which partially addresses class-level imbalance. However, focal loss alone is insufficient because it operates at the pixel level and does not account for image-level or class-level imbalance holistically.
+
+Additionally, the effectiveness of standard data augmentation techniques in this domain is uncertain. Geometric transforms such as horizontal flip and 90° rotation are commonly applied in natural image tasks, but in dermoscopy:
+
+- **Rotation** may be acceptable because lesion morphology is largely rotation-invariant.
+- **Flipping** is generally safe but does not introduce new biological variability.
+- **Colour jitter** is risky: dermoscopic features like pigment network colour and milia-like cyst brightness are clinically meaningful. Altering colour values may corrupt the visual cues the model needs to learn.
+- **Skin tone variation** is a separate concern — different skin tones can affect how attributes appear visually, and augmenting with synthetic tone shifts may introduce unrealistic patterns rather than clinically valid ones.
+
+Without dermatological domain expertise, it is difficult to guarantee that common augmentations produce images that represent plausible clinical variation rather than introducing artefacts that mislead the model.
 
 # 5. Critical Thinking and Future Work
 
@@ -668,62 +757,66 @@ Rare attributes (streaks, negative network) are expected to have lower performan
 |----------|-------------|
 | Semi-supervised learning | Use pseudo-labels from confident model predictions on unlabeled dermoscopic images |
 | Self-supervised pretraining | Pretrain the encoder on unlabeled dermoscopic images using contrastive learning (e.g., SimCLR, DINO) |
-| Active learning | Prioritize annotation of images where the model is most uncertain |
+| Active learning | Prioritize annotation of images where the model is most uncertain, maximising label efficiency |
 
 ### 5.1.2 Weak Labels and Clinician Feedback
 
 | Approach | Description |
 |----------|-------------|
-| Image-level labels | Use classification labels (Task 3) as weak supervision for attribute detection |
-| Point-click annotation | Allow clinicians to provide quick point annotations instead of full masks |
-| Interactive refinement | Use SAM's prompt-based interface for clinician-guided correction of predictions |
-| Feedback loop | Continuously improve the model by incorporating corrected predictions into training |
+| Image-level labels | Use Task 3 classification labels as weak supervision to indicate attribute presence before training segmentation |
+| Point-click annotation | Allow clinicians to provide quick point annotations instead of full pixel masks |
+| Interactive refinement | Use SAM's prompt-based interface for clinician-guided correction of predicted masks |
+| Feedback loop | Continuously improve the model by incorporating corrected predictions as new training examples |
 
 ## 5.2 Clinical Validation
 
 ### 5.2.1 Beyond Technical Metrics
 
+Dice and IoU measure agreement with a fixed ground truth, but that ground truth is itself imperfect (see Section 4.4.2). True clinical validation requires a different approach:
+
 | Validation Aspect | Method |
 |--------------------|--------|
-| Inter-rater agreement | Compare AI predictions against multiple expert annotations |
-| Clinical utility study | Measure whether AI-assisted diagnosis improves sensitivity/specificity |
-| Time-motion study | Assess whether the tool accelerates clinical workflow |
-| Prospective evaluation | Test on new, unseen clinical data from different institutions |
+| Inter-rater agreement | Compare AI predictions against multiple expert annotations using Fleiss' kappa |
+| Clinical utility study | Measure whether AI-assisted diagnosis improves sensitivity/specificity versus unaided clinician |
+| Time-motion study | Assess whether the tool reduces time-to-diagnosis in a controlled clinical workflow |
+| Prospective evaluation | Test on prospectively collected data from new clinical sites not seen during training |
 
 ### 5.2.2 Regulatory Considerations
 
 | Consideration | Detail |
 |---------------|--------|
-| Intended use | Decision-support tool, not autonomous diagnostic device |
-| Performance benchmarks | Must meet or exceed minimum Dice/IoU thresholds for clinical deployment |
-| Bias assessment | Evaluate performance across skin tones, imaging devices, and clinical sites |
-| Failure mode analysis | Document known limitations and edge cases |
+| Intended use | Decision-support tool, not an autonomous diagnostic device |
+| Performance benchmarks | Must meet or exceed minimum Dice/IoU thresholds established by clinical consensus |
+| Bias assessment | Evaluate performance stratified by skin tone, imaging device, and clinical site |
+| Failure mode documentation | Known limitations and edge cases must be documented and communicated to users |
 
 ## 5.3 Deployment Risks
 
 ### 5.3.1 Technical Risks
 
-| Risk | Mitigation |
-|------|------------|
-| Domain shift | Images from new devices or populations may degrade performance; continuous monitoring is needed |
-| Model degradation | Model performance may decrease over time as clinical practices evolve; periodic retraining is needed |
-| Inference latency | MedSAM's ViT encoder is computationally expensive; model distillation or quantization may be needed |
+| Risk | Description | Mitigation |
+|------|-------------|------------|
+| Hardware constraints | MedSAM ViT-B is large; inference is slow on CPU | Model distillation or quantization for edge deployment |
+| Domain shift | Images from new devices or populations may degrade performance | Continuous monitoring; periodic retraining on new data |
+| Model degradation | Clinical imaging practices evolve over time | Scheduled retraining and version-controlled model registry |
 
 ### 5.3.2 Clinical Risks
 
-| Risk | Mitigation |
-|------|------------|
-| Automation bias | Clinicians may over-trust AI predictions; display confidence alongside predictions |
-| False negatives | Missed structures could lead to misdiagnosis; present uncertainty maps |
-| Liability | Clear documentation that the tool provides decision support, not diagnosis |
-| Equity concerns | Validate across diverse skin tones to prevent bias against underrepresented populations |
+| Risk | Description | Mitigation |
+|------|-------------|------------|
+| Automation bias | Clinicians may over-trust AI outputs without critical review | Display confidence scores alongside predictions; require explicit clinician acknowledgement |
+| False negatives | Missed structures could contribute to diagnostic errors | Present uncertainty maps; flag low-confidence predictions prominently |
+| Equity concerns | Performance may vary across skin tones if training data is not representative | Stratified evaluation; targeted data collection for underrepresented groups |
+| Liability | Unclear responsibility if AI-assisted diagnosis leads to patient harm | Clear documentation that the tool provides decision support only, not diagnosis |
 
 ## 5.4 Future Directions
 
 | Direction | Description |
 |-----------|-------------|
-| Multi-task learning | Jointly train segmentation and classification in a unified model |
+| Two-stage attribute pipeline | Add an attribute presence classifier before the segmentation model to avoid training on empty masks |
+| Confidence estimation | Replace hard binary masks with continuous logit-based confidence heatmaps for clinical display |
+| Multi-task learning | Jointly train lesion segmentation and attribute detection in a unified architecture |
+| Longer training with better hardware | Access to A100/H100 class hardware would allow full training with 50+ epochs per stage |
 | Vision-language models | Integrate textual clinical descriptions with visual features for improved interpretability |
-| 3D dermoscopy | Extend to volumetric skin imaging modalities |
-| Federated learning | Train across institutions without sharing patient data |
-| Knowledge distillation | Compress MedSAM into a smaller model for edge deployment |
+| Federated learning | Train across multiple institutions without sharing patient data to improve generalization |
+| Knowledge distillation | Compress MedSAM into a smaller model for deployment on clinical workstations or mobile devices |

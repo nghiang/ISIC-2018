@@ -25,6 +25,7 @@ from medsam.config import (
     MEDSAM_WEIGHT_DECAY,
     MEDSAM_EPOCHS,
     MEDSAM_BATCH,
+    NUM_WORKERS,
 )
 from medsam.dataset import MedSAMDataset
 from medsam.models import MedSAM
@@ -48,6 +49,10 @@ class DiceBCELoss(nn.Module):
         dice_loss = dice_loss.mean()
 
         return bce_loss + dice_loss
+
+
+def _unwrap_model(model):
+    return model.module if isinstance(model, nn.DataParallel) else model
 
 
 # ── Training ───────────────────────────────────────────────────────────
@@ -102,7 +107,11 @@ def validate(model, loader, criterion, device):
 
 
 def train(
-    epochs=MEDSAM_EPOCHS, batch=MEDSAM_BATCH, lr=MEDSAM_LR, checkpoint=MEDSAM_CHECKPOINT
+    epochs=MEDSAM_EPOCHS,
+    batch=MEDSAM_BATCH,
+    lr=MEDSAM_LR,
+    checkpoint=MEDSAM_CHECKPOINT,
+    workers=NUM_WORKERS,
 ):
     MEDSAM_OUTPUT.mkdir(parents=True, exist_ok=True)
 
@@ -110,22 +119,43 @@ def train(
     print(f"Loading MedSAM from {checkpoint}")
 
     ckpt_path = checkpoint if Path(checkpoint).exists() else None
-    model = MedSAM(checkpoint=ckpt_path).to(DEVICE)
+    if ckpt_path is None:
+        model = MedSAM()
+    else:
+        model = MedSAM(checkpoint=ckpt_path)
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        print(f"Using DataParallel on {torch.cuda.device_count()} GPUs")
+        model = nn.DataParallel(model)
+    model = model.to(DEVICE)
 
     train_ds = MedSAMDataset(MEDSAM_DIR / "train", augment=True)
     val_ds = MedSAMDataset(MEDSAM_DIR / "val", augment=False)
+    pin_memory = torch.cuda.is_available()
+    print(f"DataLoader workers: {workers}")
     train_loader = DataLoader(
-        train_ds, batch_size=batch, shuffle=True, num_workers=4, pin_memory=True
+        train_ds,
+        batch_size=batch,
+        shuffle=True,
+        num_workers=workers,
+        pin_memory=pin_memory,
+        persistent_workers=workers > 0,
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch, shuffle=False, num_workers=4, pin_memory=True
+        val_ds,
+        batch_size=batch,
+        shuffle=False,
+        num_workers=workers,
+        pin_memory=pin_memory,
+        persistent_workers=workers > 0,
     )
 
     print(f"Train: {len(train_ds)}  Val: {len(val_ds)}")
 
     criterion = DiceBCELoss()
     optimizer = torch.optim.AdamW(
-        model.get_trainable_params(), lr=lr, weight_decay=MEDSAM_WEIGHT_DECAY
+        _unwrap_model(model).get_trainable_params(),
+        lr=lr,
+        weight_decay=MEDSAM_WEIGHT_DECAY,
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -151,13 +181,18 @@ def train(
 
         if val_dice > best_dice:
             best_dice = val_dice
-            torch.save(model.state_dict(), MEDSAM_OUTPUT / "medsam_best.pth")
+            torch.save(
+                _unwrap_model(model).state_dict(), MEDSAM_OUTPUT / "medsam_best.pth"
+            )
             tqdm.write(f"  → saved best model (dice={best_dice:.4f})")
 
         if epoch % 10 == 0:
-            torch.save(model.state_dict(), MEDSAM_OUTPUT / f"medsam_epoch{epoch}.pth")
+            torch.save(
+                _unwrap_model(model).state_dict(),
+                MEDSAM_OUTPUT / f"medsam_epoch{epoch}.pth",
+            )
 
-    torch.save(model.state_dict(), MEDSAM_OUTPUT / "medsam_last.pth")
+    torch.save(_unwrap_model(model).state_dict(), MEDSAM_OUTPUT / "medsam_last.pth")
     tqdm.write(f"Training complete. Best val dice: {best_dice:.4f}")
 
 
@@ -167,5 +202,12 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, default=MEDSAM_BATCH)
     parser.add_argument("--lr", type=float, default=MEDSAM_LR)
     parser.add_argument("--checkpoint", type=str, default=MEDSAM_CHECKPOINT)
+    parser.add_argument("--workers", type=int, default=NUM_WORKERS)
     args = parser.parse_args()
-    train(args.epochs, args.batch, args.lr, args.checkpoint)
+    train(
+        epochs=args.epochs,
+        batch=args.batch,
+        lr=args.lr,
+        checkpoint=args.checkpoint,
+        workers=args.workers,
+    )

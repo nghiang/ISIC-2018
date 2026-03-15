@@ -4,7 +4,6 @@ Converts ISIC segmentation masks to YOLO bounding-box format.
 """
 
 import shutil
-from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -76,13 +75,12 @@ def prepare_yolo(train_ids, val_ids):
 
     yaml_path = YOLO_DIR / "dataset.yaml"
     yaml_path.write_text(
-        f"path: {YOLO_DIR.resolve()}\n"
-        f"train: images/train\n"
-        f"val: images/val\n"
-        f"nc: 1\n"
-        f"names:\n"
-        f"  0: lesion\n"
-        f"task: detect\n"
+        "train: images/train\n"
+        "val: images/val\n"
+        "nc: 1\n"
+        "names:\n"
+        "  0: lesion\n"
+        "task: detect\n"
     )
     print(
         f"YOLO dataset ready at {YOLO_DIR}  ({len(train_ids)} train, {len(val_ids)} val)"

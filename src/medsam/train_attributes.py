@@ -30,6 +30,7 @@ from medsam.config import (
     ATTRIBUTES,
     NUM_ATTRIBUTES,
     MEDSAM_IMG_SIZE,
+    NUM_WORKERS,
 )
 from medsam.dataset import AttributeDataset
 from medsam.models import AttributeSegModel
@@ -72,6 +73,10 @@ class FocalDiceLoss(nn.Module):
         dice_loss = dice_loss / pred.shape[1]
 
         return focal_loss + dice_loss
+
+
+def _unwrap_model(model):
+    return model.module if isinstance(model, nn.DataParallel) else model
 
 
 # ── Resize helper ──────────────────────────────────────────────────────
@@ -145,7 +150,11 @@ def validate(model, loader, criterion, device):
 
 
 def train(
-    epochs=ATTR_EPOCHS, batch=ATTR_BATCH, lr=ATTR_LR, checkpoint=MEDSAM_CHECKPOINT
+    epochs=ATTR_EPOCHS,
+    batch=ATTR_BATCH,
+    lr=ATTR_LR,
+    checkpoint=MEDSAM_CHECKPOINT,
+    workers=NUM_WORKERS,
 ):
     ATTR_OUTPUT.mkdir(parents=True, exist_ok=True)
 
@@ -156,24 +165,45 @@ def train(
     else:
         print("No SAM checkpoint found — training encoder from scratch")
 
-    model = AttributeSegModel(sam_checkpoint=ckpt_path, freeze_encoder=True).to(DEVICE)
+    if ckpt_path is None:
+        model = AttributeSegModel(freeze_encoder=True)
+    else:
+        model = AttributeSegModel(sam_checkpoint=ckpt_path, freeze_encoder=True)
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        print(f"Using DataParallel on {torch.cuda.device_count()} GPUs")
+        model = nn.DataParallel(model)
+    model = model.to(DEVICE)
 
     train_ds = AttributeDataset(
         ATTR_DIR / "train", img_size=ATTR_IMG_SIZE, augment=True
     )
     val_ds = AttributeDataset(ATTR_DIR / "val", img_size=ATTR_IMG_SIZE, augment=False)
+    pin_memory = torch.cuda.is_available()
+    print(f"DataLoader workers: {workers}")
     train_loader = DataLoader(
-        train_ds, batch_size=batch, shuffle=True, num_workers=4, pin_memory=True
+        train_ds,
+        batch_size=batch,
+        shuffle=True,
+        num_workers=workers,
+        pin_memory=pin_memory,
+        persistent_workers=workers > 0,
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch, shuffle=False, num_workers=4, pin_memory=True
+        val_ds,
+        batch_size=batch,
+        shuffle=False,
+        num_workers=workers,
+        pin_memory=pin_memory,
+        persistent_workers=workers > 0,
     )
 
     print(f"Train: {len(train_ds)}  Val: {len(val_ds)}")
 
     criterion = FocalDiceLoss()
     optimizer = torch.optim.AdamW(
-        model.get_trainable_params(), lr=lr, weight_decay=ATTR_WEIGHT_DECAY
+        _unwrap_model(model).get_trainable_params(),
+        lr=lr,
+        weight_decay=ATTR_WEIGHT_DECAY,
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -208,13 +238,16 @@ def train(
 
         if mean_dice > best_dice:
             best_dice = mean_dice
-            torch.save(model.state_dict(), ATTR_OUTPUT / "attr_best.pth")
+            torch.save(_unwrap_model(model).state_dict(), ATTR_OUTPUT / "attr_best.pth")
             tqdm.write(f"  → saved best model (dice={best_dice:.4f})")
 
         if epoch % 10 == 0:
-            torch.save(model.state_dict(), ATTR_OUTPUT / f"attr_epoch{epoch}.pth")
+            torch.save(
+                _unwrap_model(model).state_dict(),
+                ATTR_OUTPUT / f"attr_epoch{epoch}.pth",
+            )
 
-    torch.save(model.state_dict(), ATTR_OUTPUT / "attr_last.pth")
+    torch.save(_unwrap_model(model).state_dict(), ATTR_OUTPUT / "attr_last.pth")
     tqdm.write(f"Training complete. Best mean dice: {best_dice:.4f}")
 
 
@@ -224,5 +257,12 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, default=ATTR_BATCH)
     parser.add_argument("--lr", type=float, default=ATTR_LR)
     parser.add_argument("--checkpoint", type=str, default=MEDSAM_CHECKPOINT)
+    parser.add_argument("--workers", type=int, default=NUM_WORKERS)
     args = parser.parse_args()
-    train(args.epochs, args.batch, args.lr, args.checkpoint)
+    train(
+        epochs=args.epochs,
+        batch=args.batch,
+        lr=args.lr,
+        checkpoint=args.checkpoint,
+        workers=args.workers,
+    )

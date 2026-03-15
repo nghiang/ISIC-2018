@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 # ── Paths ──────────────────────────────────────────────────────────────
@@ -23,3 +24,4 @@ YOLO_MODEL = "yolov8n.pt"
 YOLO_EPOCHS = 100
 YOLO_BATCH = 16
 YOLO_IMG_SIZE = 640
+YOLO_WORKERS = max(2, min(8, os.cpu_count() or 2))

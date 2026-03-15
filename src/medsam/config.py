@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import torch
 
@@ -49,6 +50,7 @@ ATTR_LR = 1e-4
 ATTR_WEIGHT_DECAY = 0.01
 ATTR_EPOCHS = 80
 ATTR_BATCH = 4
+NUM_WORKERS = max(2, min(8, os.cpu_count() or 2))
 
 # ── Device ─────────────────────────────────────────────────────────────
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
